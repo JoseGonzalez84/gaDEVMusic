@@ -1,5 +1,7 @@
 <?php
 
+namespace App;
+
 /*
  TODOs:
     - Limite de peticiones
@@ -21,11 +23,17 @@ define('RUTA_EXE', $argv[0]);
 define('FICHERO_LOG', "log_" . date("yM") . ".log");
 // Requires.
 require_once "vendor/autoload.php";
-require_once "functions/utiles.php";
-require_once "functions/endpoints.php";
+require_once "src/utiles.php";
+require_once "src/Process.php";
+require_once "src/Utilities.php";
+require_once "src/OutputFormats.php";
+require_once "src/endpoints.php";
 
+use App\Src\Utilities;
+use App\Src\Process;
+use Exception;
+use Dotenv;
 use SergiX44\Nutgram\Nutgram;
-use SergiX44\Nutgram\Telegram\Types\Internal\InputFile;
 use SergiX44\Nutgram\Telegram\Types\Keyboard\InlineKeyboardMarkup;
 use SergiX44\Nutgram\Telegram\Types\Keyboard\InlineKeyboardButton;
 
@@ -39,6 +47,7 @@ try {
     }
     // Check de que el servicio está activo.
     if (checkIsAlreadyRunning() === true) {
+        echo "entro aqui?";
         exit;
         //throw new Exception("El servicio ya se encontraba activo. Se mantiene sesion.");
     } else {
@@ -141,6 +150,8 @@ try {
 
     $bot->onText('download {url}', function (Nutgram $bot, string $url) {
         if (filter_var($url, FILTER_VALIDATE_URL) !== false) {
+            $proceso = new Process($url);
+            $bot->sendMessage("Esto es un descarga: ".$proceso->getQuery());
         }
     });
 
@@ -209,79 +220,7 @@ try {
 
     $bot->onText('https://{texto}', function (Nutgram $bot, string $texto) {
         if (filter_var('https://' . $texto, FILTER_VALIDATE_URL) !== false) {
-            logUsuario($bot, "Solicita una descarga. URL: https://$texto");
-            $bot->sendMessage("🛫 Vamos allá! ");
-            try {
-                $descriptorspec = array(
-                    0 => array("pipe", "r"),  // stdin
-                    1 => array("pipe", "w"),  // stdout
-                    2 => array("pipe", "w")   // stderr
-                );
-
-                $nombreFichero = "'%(title)s'.mp3";
-                $rutaDescarga = "-o /tmp/$nombreFichero";
-                $process = proc_open('yt-dlp -x ' . $rutaDescarga . ' --restrict-filenames --embed-thumbnail --embed-metadata --audio-format mp3 ' . $texto, $descriptorspec, $pipes);
-
-                if (is_resource($process)) {
-                    $ficheros = [];
-                    $informadoPlaylist = false;
-                    while ($line = fgets($pipes[1])) {
-                        logUsuario($bot, "YT-DLP -> $line");
-                        if (str_contains($line, '[ExtractAudio]') === true) {
-                            $bot->sendMessage("🎶 Convirtiendo en audio");
-                            $ficheros[] = explode('[ExtractAudio] Destination: ', $line);
-                        } elseif (str_contains($line, 'ERROR:') === true) {
-                            $bot->sendMessage("Hay algun error con un elemento.");
-                        }
-                        if (str_contains($texto, 'playlist') === true) {
-                            if ($informadoPlaylist === false) {
-                                $informadoPlaylist = true;
-                                $bot->sendMessage("🚀 Procesando la playlist.");
-                                sleep(3);
-                                $bot->sendMessage("⏱️ Esto puede tardar un rato... Si hubiera algún problema, el sistema te avisará.");
-                            }
-                        } else {
-                            if (str_contains($line, 'ERROR: [DRM]') === true) {
-                                $bot->sendMessage("🚫 Enlace con protección DRM. No permitido.");
-                            }
-                        }
-                        flush();
-                    }
-
-                    fclose($pipes[0]);
-                    fclose($pipes[1]);
-                    fclose($pipes[2]);
-
-                    $return_value = proc_close($process);
-                    $errores = [];
-                    if ((int) $return_value === 0) {
-                        foreach ($ficheros as $fichero) {
-                            try {
-                                $ficheroRutaMP3 = trim($fichero[1]);
-                                if (file_exists($ficheroRutaMP3) === true) {
-                                    $ficheroMP3 = fopen($ficheroRutaMP3, 'r+');
-                                    $bot->sendMessage("🚚 Enviando el fichero");
-                                    $bot->sendAudio(audio: InputFile::make($ficheroMP3), caption: "🎉 ¡Que lo disfrutes!");
-                                    logUsuario($bot, "Recibe el fichero: $ficheroRutaMP3.");
-                                    unlink($ficheroRutaMP3);
-                                } else {
-                                    throw new Exception("Error con el fichero: $ficheroRutaMP3");
-                                }
-                            } catch (\Exception $ex) {
-                                $errores[] = $ex->getMessage();
-                            }
-                        }
-                        // Si hubo errores, notificarlo.
-                        if (empty($errores) === false) {
-                            throw new Exception('💩 Hubo errores en el proceso');
-                        }
-                    }
-                }
-            } catch (Exception $ex) {
-                logUsuario($bot, "ERROR: " . $ex->getMessage());
-                logServicio("ERROR Obtencion fichero: " . $ex->getMessage());
-                $bot->sendMessage("😵‍💫 Algo salió mal: " . $ex->getMessage() . ".");
-            }
+            ejecucionDescarga($bot, $texto);
         } else {
             $bot->sendMessage("❗No parece ser una URL válida: " . $texto);
             logUsuario($bot, "URL NO VALIDA: " . $texto);
